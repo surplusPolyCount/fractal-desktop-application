@@ -1,3 +1,6 @@
+//sources: 
+//http://csharpexamples.com/tag/parallel-bitmap-processing/
+//
 /*
 GOALS:
 render mandelbrot 
@@ -20,6 +23,9 @@ using System.IO;
 using Microsoft.Win32;
 using System.Text;
 using System.Drawing;
+using System.Drawing.Imaging;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace fractalBackground
 {
@@ -28,11 +34,12 @@ namespace fractalBackground
         static void Main(string[] args){
             int screenWidth  = Screen.PrimaryScreen.WorkingArea.Width;
             int screenHeight = Screen.PrimaryScreen.WorkingArea.Height;
-            ImageRender myScreen = new ImageRender(screenWidth*2, screenHeight*2);
+            ImageRender myScreen = new ImageRender(screenWidth*1, screenHeight*1);
             myScreen.drawFractal();
         }
     }
 
+    #region MandelbrotSet
     class MandelFractal
     {
         public double    xmax     =  0.5; 
@@ -132,6 +139,7 @@ namespace fractalBackground
             }
         }  
     }
+    #endregion
 
     class JuliaFractal{
         public JuliaFractal(){ }
@@ -218,29 +226,29 @@ namespace fractalBackground
 
         public void drawJulia(int width, int height, Bitmap btmp){
             this.correctCoordinates();
-            Console.WriteLine("hello, let's see if we are dealing w a square {0} {1} {2} {3}", this.xmax, this.xmin, this.ymax, this.ymin); 
-            Console.WriteLine("width and height: {0} {1}", width, height);
-            Color pixCol = new Color(); 
-            double[] data = new double[3];
+            //Console.WriteLine("hello, let's see if we are dealing w a square {0} {1} {2} {3}", this.xmax, this.xmin, this.ymax, this.ymin); 
+            //Console.WriteLine("width and height: {0} {1}", width, height);
+            
+            //unsafe keyword used for when handling pointers
+            //must compile with the -unsafe tag
+            unsafe{
+                BitmapData btmpD =  btmp.LockBits(new Rectangle(0, 0, width, height), ImageLockMode.ReadWrite, btmp.PixelFormat);
+                int bytesPerPixel = Bitmap.GetPixelFormatSize(btmp.PixelFormat) / 8;
+                byte* ptrFirstPixel = (byte*)btmpD.Scan0;
+                int bail = 400;
 
-            for(int y= 0; y < height; y++){
-                for(int x = 0; x < width; x++){
-                    int bail = 600;
-                    double[] coor = xy_conv(x, y);
-                    double[] ab = isInJuliaSet(coor[0], coor[1], bail);
-                    //if(ab[0] + ab[1] <= r){
-                        data[0] = 255-Math.Round(255*(ab[2]/bail));
-                        data[1] = Math.Round(255*(ab[2]/bail));
-                        data[2] = 255-Math.Round(255*(ab[2]/bail));
-                    //}
-                    pixCol = Color.FromArgb(
-                        Convert.ToByte(data[0]),
-                        Convert.ToByte(data[1]),
-                        Convert.ToByte(data[2]),
-                        255 
-                    );
-                    btmp.SetPixel(x,y,pixCol);
-                }
+                Parallel.For(0, height, y=>{ 
+                    byte* currentLine = ptrFirstPixel + (y * (width*bytesPerPixel));
+                    for(int x = 0; x < width; x++){
+                        double[] coor = xy_conv(x, y);
+                        double[] ab = isInJuliaSet(coor[0], coor[1], bail);
+                        currentLine[x * bytesPerPixel] = Convert.ToByte(255-Math.Round(255*(ab[2]/bail)));
+                        currentLine[x * bytesPerPixel+1] = Convert.ToByte(Math.Round(255*(1-ab[2]/bail)));
+                        currentLine[x * bytesPerPixel+2] = Convert.ToByte(Math.Round(255*(ab[2]/bail)));
+                        currentLine[x * bytesPerPixel+3] = 255;
+                    }
+                });
+                btmp.UnlockBits(btmpD);
             }
         }
     }
@@ -259,12 +267,12 @@ namespace fractalBackground
         public int screenHeight { get; set; }
 
         public void drawFractal(){
-            /*
+            
             MandelFractal mandelFractal = new MandelFractal(screenWidth, screenHeight); 
             Bitmap bitmap1 = new Bitmap(screenWidth, screenHeight);
             mandelFractal.drawMandel(screenWidth, screenHeight, bitmap1);
             bitmap1.Save(@"mandelBackground.png");
-            */
+            
             // -0.74543, 0.11301
             //  -0.8, 0.156
             // 0.285, 0.01
