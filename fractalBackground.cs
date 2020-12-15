@@ -3,12 +3,12 @@
 //
 /*
 GOALS:
-render mandelbrot 
-render julia 
-(store the img in tmp dir)
-make it so you can set it a desktop background
-create animations between different sets?
-GUI: 
+render mandelbrot                                   -Y
+render julia                                        -Y
+create animations (zooming or between sets)?        -n
+(store the img in tmp dir)                          -n
+make it so you can set it a desktop background      -n
+GUI:                                                -n
     choose coordinates 
     set as desktop background
     save somewhere on pc 
@@ -35,28 +35,38 @@ namespace fractalBackground
             int screenWidth  = Screen.PrimaryScreen.WorkingArea.Width;
             int screenHeight = Screen.PrimaryScreen.WorkingArea.Height;
             ImageRender myScreen = new ImageRender(screenWidth*1, screenHeight*1);
-            myScreen.drawFractal();
+            myScreen.drawFractals();
         }
     }
 
-    #region MandelbrotSet
-    class MandelFractal
+    class Fractal
     {
-        public double    xmax     =  0.5; 
-        public double    xmin     = -2.1; 
-        public double    ymax     =  1.3; 
-        public double    ymin     = -1.3; 
+        
+        //class properties
+        public double screenHeight { get; set; }
+        public double screenWidth { get; set; } 
+        public double xmax {get; set;}
+        public double xmin {get; set;}
+        public double ymax {get; set;}
+        public double ymin {get; set;}
 
-        public MandelFractal(){ }
-        public MandelFractal(double width, double height){
+
+        //default constructor
+        public Fractal(){}
+
+        //Instancce constructor
+        public Fractal(double width, double height){
             screenWidth    = width; 
             screenHeight   = height;
         }
 
-        //class properties
-        public double screenHeight { get; set; }
-        public double screenWidth { get; set; }
-
+        public double[] xy_conv(double x, double y){
+            double[] result = new double[2];
+            result[0] =  ((this.xmax-this.xmin)/(this.screenWidth)*x)+this.xmin;
+            result[1] =  ((this.ymax-this.ymin)/(this.screenHeight)*y)+this.ymin;
+            return result;
+        }
+        
         public void correctCoordinates(){
             if(screenWidth ==screenHeight){Console.WriteLine("did not have to correct\n"); return;}
             double shortestSide = screenHeight>screenWidth?screenWidth:screenHeight;
@@ -70,21 +80,51 @@ namespace fractalBackground
             Console.WriteLine("pixeltoplaneratio: {0}\nAmounttoadd: {1}\npixelratio: {2}\nScreenwidth/height: {3} / {4}", pixelToPlane_ratio, amountToAdd, pixel_ratio, screenWidth, screenHeight);
 
             if(pixel_ratio > 1){
-                ymax += amountToAdd/2;
-                ymin -= amountToAdd/2;
+                this.ymax += amountToAdd/2;
+                this.ymin -= amountToAdd/2;
             }
             if(pixel_ratio < 1){
-                xmax += amountToAdd/2;
-                xmin -= amountToAdd/2;
+                this.xmax += amountToAdd/2;
+                this.xmin -= amountToAdd/2;
             }
             Console.WriteLine("did correct: \n{0} {1} {2} {3}", ymax, ymin, xmax, xmin);
-        } 
-        
-        double[] xy_conv(double x, double y){
-            double[] result = new double[2];
-            result[0] =  ((xmax-xmin)/(screenWidth)*x)+xmin;
-            result[1] =  ((ymax-ymin)/(screenHeight)*y)+ymin;
-            return result;
+        }
+
+        public delegate double[] isInBounds(double x, double y, int bail);
+
+        public void drawFractal(int width, int height, Bitmap btmp, isInBounds inBounds){
+            unsafe{
+                BitmapData btmpD =  btmp.LockBits(new Rectangle(0, 0, width, height), ImageLockMode.ReadWrite, btmp.PixelFormat);
+                int bytesPerPixel = Bitmap.GetPixelFormatSize(btmp.PixelFormat) / 8;
+                byte* ptrFirstPixel = (byte*)btmpD.Scan0;
+                int bail = 400;
+
+                Parallel.For(0, height, y=>{ 
+                    byte* currentLine = ptrFirstPixel + (y * (width*bytesPerPixel));
+                    for(int x = 0; x < width; x++){
+                        double[] coor = xy_conv(x, y);
+                        double[] ab = inBounds(coor[0], coor[1], bail);
+                        currentLine[x * bytesPerPixel] = Convert.ToByte(255-Math.Round(255*(ab[2]/bail)));
+                        currentLine[x * bytesPerPixel+1] = Convert.ToByte(Math.Round(255*(1-ab[2]/bail)));
+                        currentLine[x * bytesPerPixel+2] = Convert.ToByte(Math.Round(255*(ab[2]/bail)));
+                        currentLine[x * bytesPerPixel+3] = 255;
+                    }
+                });
+                btmp.UnlockBits(btmpD);
+            }
+        }
+    }
+
+    #region MandelbrotSet
+    class MandelFractal : Fractal
+    {
+        public MandelFractal(double width, double height){ 
+            screenWidth    = width; 
+            screenHeight   = height;
+            this.xmax =  0.5; 
+            this.xmin = -2.1; 
+            this.ymax =  1.3; 
+            this.ymin = -1.3; 
         }
 
         public double[] isInMandelSet(double x, double y, int bail)
@@ -108,41 +148,23 @@ namespace fractalBackground
             return result; 
         }
 
-        public void drawMandel(double width, double height, Bitmap imageToDraw){
+        public void drawMandel(int width, int height, Bitmap btmp){
         //loop through each pixel
             this.correctCoordinates();
-            Console.WriteLine("hello, let's see if we are dealing w a square {0} {1} {2} {3}\n", this.xmax, this.xmin, this.ymax, this.ymin); 
-            Console.WriteLine("width and height: {0} {1}", width, height);
-            Color pixCol = new Color(); 
-            double[] data = new double[3];
-
-            for(int y= 0; y < height; y++){
-                for(int x = 0; x < width; x++){
-                    int bail = 75;
-                    double[] coor = xy_conv(x, y);
-
-                    double[] ab = isInMandelSet(coor[0], coor[1], bail);
-                    if(ab[0] + ab[1] <= 2){
-                        //console.log(ab[0] + ab[1]);
-                        data[0] = ab[2]>bail/4?Math.Round(255*(ab[2]/bail), 0):0;
-                        data[1] = ab[2]>bail/4?Math.Round(255*(ab[2]/bail), 0):0;
-                        data[2] = ab[2]>bail/10?Math.Round(255*(ab[2]/bail),0):0;
-                    }
-                    pixCol = Color.FromArgb(
-                        Convert.ToByte(data[0]),
-                        Convert.ToByte(data[1]),
-                        Convert.ToByte(data[2]),
-                        255 
-                    );
-                    imageToDraw.SetPixel(x,y,pixCol);
-                }
-            }
+            //Console.WriteLine("hello, let's see if we are dealing w a square {0} {1} {2} {3}\n", this.xmax, this.xmin, this.ymax, this.ymin); 
+            //Console.WriteLine("width and height: {0} {1}", width, height);
+            drawFractal(width, height, btmp, isInMandelSet);
         }  
     }
     #endregion
 
-    class JuliaFractal{
-        public JuliaFractal(){ }
+    #region JuliaSet
+    class JuliaFractal : Fractal
+    {
+        double r {get; set;}
+        double cx {get; set;}
+        double cy {get; set;}
+
         public JuliaFractal(int width, int height, double rx, double iy){
             screenWidth    = width; 
             screenHeight   = height;
@@ -150,15 +172,6 @@ namespace fractalBackground
             cy = iy;
             r = initializeBounds(cx, cy); 
         }
-        int screenWidth { get; set; }
-        int screenHeight { get; set; }
-        double r {get; set;}
-        double cx {get; set;}
-        double cy {get; set;}
-        double xmin;
-        double ymin; 
-        double xmax; 
-        double ymax;  
 
         double initializeBounds(double real, double imaginary){
             int i = imaginary > 0? -1 : 1; 
@@ -167,41 +180,11 @@ namespace fractalBackground
             double r = (1 + Math.Sqrt(c))/2; 
             Console.WriteLine("bounds made!: {0}", r); 
             
-            xmin = -r; 
-            ymin = -r;
-            xmax =  r; 
-            ymax =  r; 
+            this.xmin = -r; 
+            this.ymin = -r;
+            this.xmax =  r; 
+            this.ymax =  r; 
             return r; 
-        }
-
-        public void correctCoordinates(){
-            if(screenWidth ==screenHeight){Console.WriteLine("did not have to correct\n"); return;}
-            double shortestSide = screenHeight>screenWidth?screenWidth:screenHeight;
-            double longestSide = screenHeight>screenWidth?screenHeight:screenWidth;
-
-            double pixel_ratio = screenHeight/screenWidth;
-            double plane_ratio = (ymax + Math.Abs(ymin))/(xmax+Math.Abs(xmin));
-
-            double pixelToPlane_ratio = (ymax + Math.Abs(ymin))/shortestSide;
-            double amountToAdd = (longestSide-shortestSide) * pixelToPlane_ratio;
-            //Console.WriteLine("pixeltoplaneratio: {0} :: Amounttoadd: {1} :: pixelratio: {2} :: Screenwidth/height: {3} / {4}", pixelToPlane_ratio, amountToAdd, pixel_ratio, screenWidth, screenHeight);
-
-            if(pixel_ratio > 1){
-                ymax += amountToAdd/2;
-                ymin -= amountToAdd/2;
-            }
-            if(pixel_ratio < 1){
-                xmax += amountToAdd/2;
-                xmin -= amountToAdd/2;
-            }
-            //Console.WriteLine("did correct: {0} {1} {2} {3} \n", ymax, ymin, xmax, xmin);
-        } 
-
-        double[] xy_conv(double x, double y){
-            double[] result = new double[2];
-            result[0] =  ((xmax-xmin)/(screenWidth)*x)+xmin;
-            result[1] =  ((ymax-ymin)/(screenHeight)*y)+ymin;
-            return result;
         }
 
         double[] isInJuliaSet(double x, double y, int bail){
@@ -226,37 +209,16 @@ namespace fractalBackground
 
         public void drawJulia(int width, int height, Bitmap btmp){
             this.correctCoordinates();
-            //Console.WriteLine("hello, let's see if we are dealing w a square {0} {1} {2} {3}", this.xmax, this.xmin, this.ymax, this.ymin); 
-            //Console.WriteLine("width and height: {0} {1}", width, height);
-            
-            //unsafe keyword used for when handling pointers
-            //must compile with the -unsafe tag
-            unsafe{
-                BitmapData btmpD =  btmp.LockBits(new Rectangle(0, 0, width, height), ImageLockMode.ReadWrite, btmp.PixelFormat);
-                int bytesPerPixel = Bitmap.GetPixelFormatSize(btmp.PixelFormat) / 8;
-                byte* ptrFirstPixel = (byte*)btmpD.Scan0;
-                int bail = 400;
-
-                Parallel.For(0, height, y=>{ 
-                    byte* currentLine = ptrFirstPixel + (y * (width*bytesPerPixel));
-                    for(int x = 0; x < width; x++){
-                        double[] coor = xy_conv(x, y);
-                        double[] ab = isInJuliaSet(coor[0], coor[1], bail);
-                        currentLine[x * bytesPerPixel] = Convert.ToByte(255-Math.Round(255*(ab[2]/bail)));
-                        currentLine[x * bytesPerPixel+1] = Convert.ToByte(Math.Round(255*(1-ab[2]/bail)));
-                        currentLine[x * bytesPerPixel+2] = Convert.ToByte(Math.Round(255*(ab[2]/bail)));
-                        currentLine[x * bytesPerPixel+3] = 255;
-                    }
-                });
-                btmp.UnlockBits(btmpD);
-            }
-        }
+            drawFractal(width, height, btmp, isInJuliaSet);
+        }   
     }
+    #endregion
 
     class ImageRender
     {
-        //class initializer
+        //defaut class intializer 
         public ImageRender(){ }
+        
         //class initializer pt.2
         public ImageRender(int width, int height){
             screenWidth    = width; 
@@ -266,7 +228,7 @@ namespace fractalBackground
         public int screenWidth { get; set; }
         public int screenHeight { get; set; }
 
-        public void drawFractal(){
+        public void drawFractals(){
             
             MandelFractal mandelFractal = new MandelFractal(screenWidth, screenHeight); 
             Bitmap bitmap1 = new Bitmap(screenWidth, screenHeight);
